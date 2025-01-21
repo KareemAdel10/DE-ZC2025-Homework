@@ -7,7 +7,7 @@ _([Video source](https://www.youtube.com/watch?v=OkfLX28Ecjg))_
 
 To keep things simple, we'll use the same database as the one we set up for Kestra in Docker Compose.
 
-![1737493560895](images/README/1737493560895.png)
+![1737493560895](images/1737493560895.png)
 
 #### > Variables
 
