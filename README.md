@@ -1,7 +1,7 @@
 # DE-ZC2025-Homework-Solutions
 
 - This repo has all the solutions for the **Data Engineering Zoom Camp Cohort 2025**.
-- ![1736943296281](images/README/1736943296281.png)
+- ![image](https://github.com/user-attachments/assets/1adecce6-f8fd-43c8-aefb-96b079bc6f63)
 
 # Recognition
 
