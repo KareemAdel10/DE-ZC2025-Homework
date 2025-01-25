@@ -1,0 +1,473 @@
+id: 03_AZURE_flow
+namespace: zoomcamp
+
+inputs:
+  - id: taxi_type
+    type: SELECT
+    values: ['yellow', 'green']
+    defaults: 'green'
+
+  - id: month
+    type: SELECT
+    values: ['01','02','03','04','05','06',
+             '07','08','09','10','11','12']
+    defaults: '01'
+
+  - id: year
+    type: SELECT
+    values: ['2019', '2020', '2021']
+    defaults: '2019'
+
+  
+variables:
+  file: "{{inputs.taxi_type}}_tripdata_{{inputs.year}}-{{inputs.month}}.csv"
+  adlsg2_file: "abfss://taxidata@kestradatalake.dfs.core.windows.net/{{inputs.taxi_type}}_taxi/{{render(vars.file)}}"
+  table: "{{inputs.taxi_type}}_tripdata"
+  data: "{{outputs.Extract.outputFiles[inputs.taxi_type ~ '_tripdata_' ~ inputs.year ~ '-' ~  inputs.month ~ '.csv']}}"
+
+tasks:
+
+  - id: Execution_Labels
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+        file: '{{render(vars.file)}}'
+        taxi_type: '{{inputs.taxi_type}}'
+  
+  - id: Extract
+    type: io.kestra.plugin.scripts.shell.Commands
+    outputFiles:
+      - "*.csv"    
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands: 
+      - wget -qO- https://github.com/DataTalksClub/nyc-tlc-data/releases/download/{{inputs.taxi_type}}/{{render(vars.file)}}.gz | gunzip > {{render(vars.file)}}
+    disabled: true
+
+  - id: Upload_to_ADLSg2
+    type: io.kestra.plugin.azure.storage.adls.Upload
+    endpoint: "https://kestradatalake.dfs.core.windows.net"
+    connectionString: "{{kv('ADLSg2_CONNECTION_STRING')}}"
+    filePath: "{{inputs.taxi_type}}_taxi/{{render(vars.file)}}"
+    fileSystem: taxidata
+    from: "{{render(vars.data)}}"
+    disabled: true
+
+
+  - id: if_green
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{inputs.taxi_type == 'green'}}"
+    then:
+    - id: create_main_green_table
+      type: io.kestra.plugin.scripts.python.Script
+      script: |
+          import pyodbc
+          from azure.identity import DefaultAzureCredential
+
+          # Connection parameters
+          server   = "{{kv('SYNAPSE_SERVER')}}"
+          database = "{{kv('SYNAPSE_DATABASE')}}"
+          username = "{{kv('SYNAPSE_USERNAME')}}"
+          password = "{{kv('SYNAPSE_PASSWORD')}}"
+          driver   = '{ODBC Driver 17 for SQL Server}'
+
+          # Establish connection
+          conn = pyodbc.connect(
+              f'DRIVER={driver};SERVER={server};DATABASE={database};UID={username};PWD={password}',
+              autocommit=True 
+          )
+          cursor = conn.cursor()
+
+          create_table_sql = """
+          IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = '{{render(vars.table)}}')
+          CREATE TABLE {{render(vars.table)}} (
+              unique_row_id VARCHAR(255) NOT NULL,
+              filename VARCHAR(255) NOT NULL,
+              VendorID VARCHAR(255),
+              lpep_pickup_datetime DATETIME2,
+              lpep_dropoff_datetime DATETIME2,
+              store_and_fwd_flag VARCHAR(255),
+              RatecodeID VARCHAR(255),
+              PULocationID VARCHAR(255),
+              DOLocationID VARCHAR(255),
+              passenger_count INT,
+              trip_distance DECIMAL(18, 2),
+              fare_amount DECIMAL(18, 2),
+              extra DECIMAL(18, 2),
+              mta_tax DECIMAL(18, 2),
+              tip_amount DECIMAL(18, 2),
+              tolls_amount DECIMAL(18, 2),
+              ehail_fee DECIMAL(18, 2),
+              improvement_surcharge DECIMAL(18, 2),
+              total_amount DECIMAL(18, 2),
+              payment_type INT,
+              trip_type VARCHAR(255),
+              congestion_surcharge DECIMAL(18, 2)
+            )
+          WITH(
+                DISTRIBUTION = HASH(unique_row_id),
+                CLUSTERED COLUMNSTORE INDEX
+                );
+          """
+          cursor.execute(create_table_sql)
+          cursor.close()
+          conn.close()
+
+    - id: create_external_green_table
+      type: io.kestra.plugin.scripts.python.Script
+      script: |
+        import pyodbc
+        from azure.identity import DefaultAzureCredential
+
+        # Connection parameters
+        server   = "{{kv('SYNAPSE_SERVER')}}"
+        database = "{{kv('SYNAPSE_DATABASE')}}"
+        username = "{{kv('SYNAPSE_USERNAME')}}"
+        password = "{{kv('SYNAPSE_PASSWORD')}}"
+        driver   = '{ODBC Driver 17 for SQL Server}'
+
+        # Establish connection with autocommit=True
+        conn = pyodbc.connect(
+            f'DRIVER={driver};SERVER={server};DATABASE={database};UID={username};PWD={password}',
+            autocommit=True
+        )
+        cursor = conn.cursor()
+
+
+        # Step 1: Create database-scoped credential
+        credential_sql = """
+        IF NOT EXISTS (SELECT * FROM sys.database_scoped_credentials WHERE name = 'WorkspaceIdentity')
+        CREATE DATABASE SCOPED CREDENTIAL WorkspaceIdentity
+        WITH
+            IDENTITY = 'Managed Identity'
+        """
+        cursor.execute(credential_sql)
+
+        # Step 2: Create external data source
+        data_source_sql = """
+        IF NOT EXISTS (SELECT * FROM sys.external_data_sources WHERE name = 'ADLSGen2')
+        CREATE EXTERNAL DATA SOURCE ADLSGen2
+        WITH (
+            LOCATION = 'abfss://taxidata@kestradatalake.dfs.core.windows.net',
+            CREDENTIAL = WorkspaceIdentity  -- Reference the credential here
+        );
+        """
+        cursor.execute(data_source_sql)
+
+        # Step 3: Create file format
+        file_format_sql = """
+        IF NOT EXISTS (SELECT * FROM sys.external_file_formats WHERE name = 'CSVFormat')
+        CREATE EXTERNAL FILE FORMAT CSVFormat 
+        WITH (
+            FORMAT_TYPE = DELIMITEDTEXT,
+            FORMAT_OPTIONS (
+                FIELD_TERMINATOR = ',',
+                FIRST_ROW = 2
+            )
+        );
+        """
+        cursor.execute(file_format_sql)
+
+        # Step 4: Create external table
+        create_external_sql = """
+        IF NOT EXISTS (SELECT * FROM sys.external_tables WHERE name = '{{render(vars.table)}}_ext')
+        CREATE EXTERNAL TABLE {{render(vars.table)}}_ext (
+            VendorID VARCHAR(255),
+            lpep_pickup_datetime DATETIME2,
+            lpep_dropoff_datetime DATETIME2,
+            store_and_fwd_flag VARCHAR(255),
+            RatecodeID VARCHAR(255),
+            PULocationID VARCHAR(255),
+            DOLocationID VARCHAR(255),
+            passenger_count INT,
+            trip_distance DECIMAL(18, 2),
+            fare_amount DECIMAL(18, 2),
+            extra DECIMAL(18, 2),
+            mta_tax DECIMAL(18, 2),
+            tip_amount DECIMAL(18, 2),
+            tolls_amount DECIMAL(18, 2),
+            ehail_fee DECIMAL(18, 2),
+            improvement_surcharge DECIMAL(18, 2),
+            total_amount DECIMAL(18, 2),
+            payment_type INT,
+            trip_type VARCHAR(255),
+            congestion_surcharge DECIMAL(18, 2)
+        )
+        WITH (
+            LOCATION = '{{inputs.taxi_type}}_taxi/{{render(vars.file)}}',
+            DATA_SOURCE = ADLSGen2,
+            FILE_FORMAT = CSVFormat
+        );
+        """
+        cursor.execute(create_external_sql)
+
+        cursor.close()
+        conn.close()
+
+    - id: merge_into_main_table
+      type: io.kestra.plugin.scripts.python.Script
+      script: |
+        import pyodbc
+        from azure.identity import DefaultAzureCredential
+
+        # Connection parameters
+        server   = "{{kv('SYNAPSE_SERVER')}}"
+        database = "{{kv('SYNAPSE_DATABASE')}}"
+        username = "{{kv('SYNAPSE_USERNAME')}}"
+        password = "{{kv('SYNAPSE_PASSWORD')}}"
+        driver   = '{ODBC Driver 17 for SQL Server}'
+
+        # Establish connection with autocommit=True
+        conn = pyodbc.connect(
+            f'DRIVER={driver};SERVER={server};DATABASE={database};UID={username};PWD={password}',
+            autocommit=True
+        )
+        cursor = conn.cursor()
+
+
+        merge_sql = """
+                  MERGE INTO {{render(vars.table)}} AS Target
+                  USING (
+                      SELECT 
+                          CAST(HASHBYTES('MD5', 
+                              CONCAT(
+                                  COALESCE(VendorID, ''),
+                                  COALESCE(CAST(lpep_pickup_datetime AS NVARCHAR(255)), ''),
+                                  COALESCE(CAST(lpep_dropoff_datetime AS NVARCHAR(255)), ''),
+                                  COALESCE(PULocationID, ''),
+                                  COALESCE(DOLocationID, '')
+                              ) 
+                              ) AS VARCHAR(255)
+                          ) AS unique_row_id,
+                          '{{render(vars.file)}}' AS filename,
+                          *
+                      FROM {{render(vars.table)}}_ext
+                  ) AS Source
+                  ON Target.unique_row_id = Source.unique_row_id
+                  WHEN NOT MATCHED THEN
+                      INSERT (unique_row_id, filename, VendorID,lpep_pickup_datetime,lpep_dropoff_datetime,store_and_fwd_flag,RatecodeID,PULocationID,DOLocationID,passenger_count,trip_distance,fare_amount,extra,mta_tax,tip_amount,tolls_amount,ehail_fee,improvement_surcharge,total_amount,payment_type,trip_type,congestion_surcharge
+        )
+                      VALUES (Source.unique_row_id, Source.filename, source.VendorID, source.lpep_pickup_datetime, source.lpep_dropoff_datetime, source.store_and_fwd_flag, source.RatecodeID, source.PULocationID, source.DOLocationID, source.passenger_count, source.trip_distance, source.fare_amount, source.extra, source.mta_tax, source.tip_amount, source.tolls_amount, source.ehail_fee, source.improvement_surcharge, source.total_amount, source.payment_type, source.trip_type, source.congestion_surcharge);
+                  """
+        cursor.execute(merge_sql)
+
+
+        truncate_sql = "DROP EXTERNAL TABLE {{render(vars.table)}}_ext"
+        cursor.execute(truncate_sql)
+
+        cursor.close()
+        conn.close()
+
+    # ---------------------------------------
+    # ---------------------------------------
+  - id: if_yellow
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{inputs.taxi_type == 'yellow'}}"
+    then:
+    - id: create_main_yellow_table
+      type: io.kestra.plugin.scripts.python.Script
+      script: |
+          import pyodbc
+          from azure.identity import DefaultAzureCredential
+
+          # Connection parameters
+          server   = "{{kv('SYNAPSE_SERVER')}}"
+          database = "{{kv('SYNAPSE_DATABASE')}}"
+          username = "{{kv('SYNAPSE_USERNAME')}}"
+          password = "{{kv('SYNAPSE_PASSWORD')}}"
+          driver   = '{ODBC Driver 17 for SQL Server}'
+
+          # Establish connection
+          conn = pyodbc.connect(
+              f'DRIVER={driver};SERVER={server};DATABASE={database};UID={username};PWD={password}',
+              autocommit=True 
+          )
+          cursor = conn.cursor()
+
+          create_table_sql = """
+          IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = '{{render(vars.table)}}')
+          CREATE TABLE {{render(vars.table)}} (
+              unique_row_id VARCHAR(255) NOT NULL,
+              filename VARCHAR(255) NOT NULL,
+              VendorID VARCHAR(255),
+              tpep_pickup_datetime DATETIME2,
+              tpep_dropoff_datetime DATETIME2,
+              passenger_count INT,
+              trip_distance DECIMAL(18, 2),
+              RatecodeID VARCHAR(255),
+              store_and_fwd_flag VARCHAR(255),
+              PULocationID VARCHAR(255),
+              DOLocationID VARCHAR(255),
+              payment_type INT,
+              fare_amount DECIMAL(18, 2),
+              extra DECIMAL(18, 2),
+              mta_tax DECIMAL(18, 2),
+              tip_amount DECIMAL(18, 2),
+              tolls_amount DECIMAL(18, 2),
+              improvement_surcharge DECIMAL(18, 2),
+              total_amount DECIMAL(18, 2),
+              congestion_surcharge DECIMAL(18, 2)
+            )
+          WITH(
+                DISTRIBUTION = HASH(unique_row_id),
+                CLUSTERED COLUMNSTORE INDEX
+                );
+          """
+          cursor.execute(create_table_sql)
+          cursor.close()
+          conn.close()
+
+    - id: create_external_yellow_table
+      type: io.kestra.plugin.scripts.python.Script
+      script: |
+        import pyodbc
+        from azure.identity import DefaultAzureCredential
+
+        # Connection parameters
+        server   = "{{kv('SYNAPSE_SERVER')}}"
+        database = "{{kv('SYNAPSE_DATABASE')}}"
+        username = "{{kv('SYNAPSE_USERNAME')}}"
+        password = "{{kv('SYNAPSE_PASSWORD')}}"
+        driver   = '{ODBC Driver 17 for SQL Server}'
+
+        # Establish connection with autocommit=True
+        conn = pyodbc.connect(
+            f'DRIVER={driver};SERVER={server};DATABASE={database};UID={username};PWD={password}',
+            autocommit=True
+        )
+        cursor = conn.cursor()
+
+
+        # Step 1: Create database-scoped credential
+        credential_sql = """
+        IF NOT EXISTS (SELECT * FROM sys.database_scoped_credentials WHERE name = 'WorkspaceIdentity')
+        CREATE DATABASE SCOPED CREDENTIAL WorkspaceIdentity
+        WITH
+            IDENTITY = 'Managed Identity'
+        """
+        cursor.execute(credential_sql)
+
+        # Step 2: Create external data source
+        data_source_sql = """
+        IF NOT EXISTS (SELECT * FROM sys.external_data_sources WHERE name = 'ADLSGen2')
+        CREATE EXTERNAL DATA SOURCE ADLSGen2
+        WITH (
+            LOCATION = 'abfss://taxidata@kestradatalake.dfs.core.windows.net',
+            CREDENTIAL = WorkspaceIdentity  -- Reference the credential here
+        );
+        """
+        cursor.execute(data_source_sql)
+
+        # Step 3: Create file format
+        file_format_sql = """
+        IF NOT EXISTS (SELECT * FROM sys.external_file_formats WHERE name = 'CSVFormat')
+        CREATE EXTERNAL FILE FORMAT CSVFormat 
+        WITH (
+            FORMAT_TYPE = DELIMITEDTEXT,
+            FORMAT_OPTIONS (
+                FIELD_TERMINATOR = ',',
+                FIRST_ROW = 2
+            )
+        );
+        """
+        cursor.execute(file_format_sql)
+
+        # Step 4: Create external table
+        create_external_sql = """
+        IF NOT EXISTS (SELECT * FROM sys.external_tables WHERE name = '{{render(vars.table)}}_ext')
+        CREATE EXTERNAL TABLE {{render(vars.table)}}_ext (
+          VendorID VARCHAR(255),
+          tpep_pickup_datetime DATETIME2,
+          tpep_dropoff_datetime DATETIME2,
+          passenger_count INT,
+          trip_distance DECIMAL(18, 2),
+          RatecodeID VARCHAR(255),
+          store_and_fwd_flag VARCHAR(255),
+          PULocationID VARCHAR(255),
+          DOLocationID VARCHAR(255),
+          payment_type INT,
+          fare_amount DECIMAL(18, 2),
+          extra DECIMAL(18, 2),
+          mta_tax DECIMAL(18, 2),
+          tip_amount DECIMAL(18, 2),
+          tolls_amount DECIMAL(18, 2),
+          improvement_surcharge DECIMAL(18, 2),
+          total_amount DECIMAL(18, 2),
+          congestion_surcharge DECIMAL(18, 2)
+        )
+        WITH (
+            LOCATION = '{{inputs.taxi_type}}_taxi/{{render(vars.file)}}',
+            DATA_SOURCE = ADLSGen2,
+            FILE_FORMAT = CSVFormat
+        );
+        """
+        cursor.execute(create_external_sql)
+
+        cursor.close()
+        conn.close()
+
+    - id: merge_into_main_yellow_table
+      type: io.kestra.plugin.scripts.python.Script
+      script: |
+        import pyodbc
+        from azure.identity import DefaultAzureCredential
+
+        # Connection parameters
+        server   = "{{kv('SYNAPSE_SERVER')}}"
+        database = "{{kv('SYNAPSE_DATABASE')}}"
+        username = "{{kv('SYNAPSE_USERNAME')}}"
+        password = "{{kv('SYNAPSE_PASSWORD')}}"
+        driver   = '{ODBC Driver 17 for SQL Server}'
+
+        # Establish connection with autocommit=True
+        conn = pyodbc.connect(
+            f'DRIVER={driver};SERVER={server};DATABASE={database};UID={username};PWD={password}',
+            autocommit=True
+        )
+        cursor = conn.cursor()
+
+
+        merge_sql = """
+                  MERGE INTO {{render(vars.table)}} AS Target
+                  USING (
+                      SELECT 
+                          CAST(HASHBYTES('MD5', 
+                              CONCAT(
+                                  COALESCE(VendorID, ''),
+                                  COALESCE(CAST(tpep_pickup_datetime AS NVARCHAR(255)), ''),
+                                  COALESCE(CAST(tpep_dropoff_datetime AS NVARCHAR(255)), ''),
+                                  COALESCE(PULocationID, ''),
+                                  COALESCE(DOLocationID, '')
+                              ) 
+                              ) AS VARCHAR(255)
+                          ) AS unique_row_id,
+                          '{{render(vars.file)}}' AS filename,
+                          *
+                      FROM {{render(vars.table)}}_ext
+                  ) AS Source
+                  ON Target.unique_row_id = Source.unique_row_id
+                  WHEN NOT MATCHED THEN
+                      INSERT (unique_row_id, filename, VendorID, tpep_pickup_datetime, tpep_dropoff_datetime, passenger_count, trip_distance, RatecodeID, store_and_fwd_flag, PULocationID, DOLocationID, payment_type, fare_amount, extra, mta_tax, tip_amount, tolls_amount, improvement_surcharge, total_amount, congestion_surcharge)
+                      
+                      VALUES (Source.unique_row_id, Source.filename, Source.VendorID, Source.tpep_pickup_datetime, Source.tpep_dropoff_datetime, Source.passenger_count, Source.trip_distance, Source.RatecodeID, Source.store_and_fwd_flag, Source.PULocationID, Source.DOLocationID, Source.payment_type, Source.fare_amount, Source.extra, Source.mta_tax, Source.tip_amount, Source.tolls_amount, Source.improvement_surcharge, Source.total_amount, Source.congestion_surcharge);
+                  """
+        cursor.execute(merge_sql)
+
+
+        truncate_sql = "DROP EXTERNAL TABLE {{render(vars.table)}}_ext"
+        cursor.execute(truncate_sql)
+
+        cursor.close()
+        conn.close()
+
+  - id: Purge_files 
+    type: io.kestra.plugin.core.storage.PurgeCurrentExecutionFiles
+    # disabled: true
+
+
+pluginDefaults:
+  - type: io.kestra.plugin.scripts.python.Script
+    values:
+      namespaceFiles:
+        enabled: true
+      containerImage: atomicaol/kestra-azure-env:1.0
+     
