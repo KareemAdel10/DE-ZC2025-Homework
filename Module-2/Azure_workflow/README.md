@@ -25,7 +25,7 @@ A pipeline that:
         - Create/maintain Synapse tables  
         - Perform UPSERT operations  
     3. Uses a custom Docker image with pre-installed Azure/PyODBC dependencies
-
+![alt text](image.png)
 
 ## File Structure
 |── flow.yaml  
