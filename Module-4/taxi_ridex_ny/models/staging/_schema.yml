@@ -5,7 +5,10 @@ sources:
     database: nyc_taxi
     schema: dbo
     tables:
-      - name: green_trip_data_2020_03
-      - name: yellow_trip_data_2020_03
+      - name: green_tripdata_2020_03
+      - name: yellow_tripdata_2020_03
       - name: fhv_tripdata_2020_03
       - name: taxi_zone_lookup
+
+
+  
