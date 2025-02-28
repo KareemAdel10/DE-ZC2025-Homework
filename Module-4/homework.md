@@ -1,8 +1,8 @@
 ![alt text](image.png)
 # Question 1: Understanding dbt model resolution
-- select * from dtc_zoomcamp_2025.raw_nyc_tripdata.ext_green_taxi <--------
+- select * from dtc_zoomcamp_2025.raw_nyc_tripdata.ext_green_taxi 
 - select * from dtc_zoomcamp_2025.my_nyc_tripdata.ext_green_taxi
-- select * from myproject.raw_nyc_tripdata.ext_green_taxi
+- select * from myproject.raw_nyc_tripdata.ext_green_taxi <--------
 - select * from myproject.my_nyc_tripdata.ext_green_taxi
 - select * from dtc_zoomcamp_2025.raw_nyc_tripdata.green_taxi
 
@@ -13,7 +13,7 @@
 - Add ORDER BY pickup_datetime DESC and LIMIT {{ var("days_back", 30) }}
 - Update the WHERE clause to pickup_datetime >= CURRENT_DATE - INTERVAL '{{ var("days_back", 30) }}' DAY
 - Update the WHERE clause to pickup_datetime >= CURRENT_DATE - INTERVAL '{{ env_var("DAYS_BACK", "30") }}' DAY
-- Update the WHERE clause to pickup_datetime >= CURRENT_DATE - INTERVAL '{{ var("days_back", env_var("DAYS_BACK", "30")) }}' DAY
+- Update the WHERE clause to pickup_datetime >= CURRENT_DATE - INTERVAL '{{ var("days_back", env_var("DAYS_BACK", "30")) }}' DAY <------
 - Update the WHERE clause to pickup_datetime >= CURRENT_DATE - INTERVAL '{{ env_var("DAYS_BACK", var("days_back", "30")) }}' DAY
 
 - Answer: Update the WHERE clause to pickup_datetime >= CURRENT_DATE - INTERVAL '{{ var("days_back", env_var("DAYS_BACK", "30")) }}' DAY
@@ -94,7 +94,7 @@ FROM valid_trips
 - Answer: green: {p97: 55.0, p95: 45.0, p90: 26.5}, yellow: {p97: 31.5, p95: 25.5, p90: 19.0}
 
 # Question 7: Top #Nth longest P90 travel time Location for FHV
-- LaGuardia Airport, Chinatown, Garment District
+- LaGuardia Airport, Chinatown, Garment District <----------
 - LaGuardia Airport, Park Slope, Clinton East
 - LaGuardia Airport, Saint Albans, Howard Beach
 - LaGuardia Airport, Rosedale, Bath Beach
