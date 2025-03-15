@@ -62,15 +62,14 @@ green-trips  OK
 # Question 4: Sending the Trip Data
 
 - when i run the script in a jupytr notebook the output that's returned is
-  - The total time taken is:  **90.93317198753357** seconds
+  - The total time taken is:  **90.93317198753357** seconds:
+
     ![1741960459667](images/homework/1741960459667.png)
 - When i run the scripty in a py environment the output that's returned is
   - Sent 476386 messages. Time taken: 62.06 seconds
-    ```
-    ```
 
     ![1741960436149](images/homework/1741960436149.png)
-- Answer: 62.06 seconds
+- Answer: **62.06 seconds**
 
 # Question 5: Build a Sessionization Window
 
@@ -84,7 +83,7 @@ green-trips  OK
     WHERE 
     	taxi_trips_streak = (SELECT MAX(taxi_trips_streak) FROM green_trips_aggregated2)
     ```
-    ![1742046360149](images/homework/1742046360149.png)![1742046268121](https://file+.vscode-resource.vscode-cdn.net/k%3A/BEST/Boot%20Camp/Zoom%20Camp/data-engineering-zoomcamp/DE-ZC-Homework/Module-6/images/homework/1742046268121.png)
+    ![1742046360149](images/homework/1742046360149.png)![1742046895858](images/homework/1742046895858.png)
 - Answer:
 
-  - PULocationID: 95 "Forest Hills" to DOLocationID: 95 "Forest Hills" with a streak of **44** trips.
+  - PULocationID: 95 "*Forest Hills*" to DOLocationID: 95 "*Forest Hills*" with a streak of **44** trips.
