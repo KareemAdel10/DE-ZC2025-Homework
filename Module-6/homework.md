@@ -62,9 +62,14 @@ green-trips  OK
 # Question 4: Sending the Trip Data
 
 - when i run the script in a jupytr notebook the output that's returned is
-  - The total time taken is:  **90.93317198753357** seconds![1741960459667](images/homework/1741960459667.png)
+  - The total time taken is:  **90.93317198753357** seconds
+    ![1741960459667](images/homework/1741960459667.png)
 - When i run the scripty in a py environment the output that's returned is
-  - Sent 476386 messages. Time taken: 62.06 seconds![1741960436149](images/homework/1741960436149.png)
+  - Sent 476386 messages. Time taken: 62.06 seconds
+    ```
+    ```
+
+    ![1741960436149](images/homework/1741960436149.png)
 - Answer: 62.06 seconds
 
 # Question 5: Build a Sessionization Window
